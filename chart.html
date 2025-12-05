@@ -1,0 +1,892 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Line / Candle Chart with Volume Profile</title>
+
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #000;
+      color: #fff;
+      font-family: sans-serif;
+    }
+
+    #layout {
+      display: grid;
+      grid-template-columns: 180px 1fr 260px;
+      height: 100vh;
+      width: 100vw;
+    }
+
+    #vp-column {
+      position: relative;
+      background: #050505;
+      border-right: 1px solid #333;
+      z-index: 5;
+    }
+
+    #vpCanvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      pointer-events: none;
+      z-index: 10;
+      display: block;
+    }
+
+    #chart-column {
+      display: flex;
+      flex-direction: column;
+      background: #000;
+    }
+
+    #price-chart {
+      flex: 3;
+      width: 100%;
+    }
+
+    #volume-chart {
+      flex: 1;
+      width: 100%;
+    }
+
+    #right-column {
+      background: #050505;
+      border-left: 1px solid #333;
+      padding: 10px;
+      box-sizing: border-box;
+      font-size: 13px;
+    }
+
+    #controls h3 {
+      margin: 0 0 8px 0;
+      font-size: 14px;
+      border-bottom: 1px solid #333;
+      padding-bottom: 4px;
+    }
+
+    .section-title {
+      margin-top: 10px;
+      margin-bottom: 4px;
+      font-weight: bold;
+      font-size: 13px;
+    }
+
+    .control-group {
+      margin-bottom: 8px;
+    }
+
+    .control-group label {
+      display: block;
+      margin-bottom: 4px;
+      cursor: pointer;
+    }
+
+    .control-group input[type="checkbox"],
+    .control-group input[type="radio"] {
+      margin-right: 6px;
+    }
+
+    #vp-width-input {
+      width: 60px;
+      padding: 2px 4px;
+      background: #111;
+      color: #fff;
+      border: 1px solid #555;
+      border-radius: 3px;
+    }
+
+    .control-button {
+      width: 100%;
+      padding: 4px 6px;
+      margin-top: 4px;
+      background: #222;
+      color: #fff;
+      border: 1px solid #555;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .control-button:hover {
+      background: #333;
+    }
+  </style>
+</head>
+<body>
+
+<div id="layout">
+  <div id="vp-column">
+    <canvas id="vpCanvas"></canvas>
+  </div>
+
+  <div id="chart-column">
+    <div id="price-chart"></div>
+    <div id="volume-chart"></div>
+  </div>
+
+  <div id="right-column">
+    <div id="controls">
+      <h3>Chart Controls</h3>
+
+      <div class="section-title">Chart Type</div>
+      <div class="control-group">
+        <label><input type="radio" name="chartType" id="radio-line" checked /> Line</label>
+        <label><input type="radio" name="chartType" id="radio-candle" /> Candles</label>
+      </div>
+
+      <div class="section-title">Overlays</div>
+      <div class="control-group">
+        <label><input type="checkbox" id="chk-trend" checked /> Trend + Prev Candle</label>
+        <label><input type="checkbox" id="chk-prevday" checked /> Previous Day H/L</label>
+        <label><input type="checkbox" id="chk-prevsession" checked /> Prev 4H Session H/L</label>
+      </div>
+
+      <div class="section-title">Volume</div>
+      <div class="control-group">
+        <label><input type="checkbox" id="chk-vp" checked /> Volume Profile</label>
+        <label><input type="checkbox" id="chk-volume-panel" checked /> Volume Panel</label>
+      </div>
+
+      <!-- Volume Profile width % as number -->
+      <div class="section-title">VP Width (%)</div>
+      <div class="control-group">
+        <input type="number" id="vp-width-input" min="10" max="100" value="60" />
+      </div>
+
+      <!-- Volume source toggle -->
+      <div class="section-title">Volume Source</div>
+      <div class="control-group">
+        <label><input type="radio" name="volSource" id="radio-vol-real" /> Volume</label>
+        <label><input type="radio" name="volSource" id="radio-vol-tick" checked /> Tick Volume</label>
+      </div>
+
+      <!-- NEW: navigation -->
+      <div class="section-title">Navigation</div>
+      <div class="control-group">
+        <button id="btn-go-latest" class="control-button">Go to Latest</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/lightweight-charts.standalone.production.js"></script>
+
+<script>
+  // ----------- MAIN PRICE CHART -----------
+  const priceChart = LightweightCharts.createChart(
+    document.getElementById('price-chart'),
+    {
+      layout: { background: { color: '#000000' }, textColor: '#cccccc' },
+      grid: {
+        vertLines: { color: '#222222' },
+        horzLines: { color: '#222222' },
+      },
+      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+      rightPriceScale: { borderColor: '#555555' },
+      timeScale: { borderColor: '#555555' },
+    }
+  );
+
+  const lineSeries = priceChart.addSeries(
+    LightweightCharts.LineSeries,
+    { color: '#00ff00', lineWidth: 2, visible: true }
+  );
+
+  const candleSeries = priceChart.addSeries(
+    LightweightCharts.CandlestickSeries,
+    {
+      upColor: '#26a69a',
+      downColor: '#ef5350',
+      borderUpColor: '#26a69a',
+      borderDownColor: '#ef5350',
+      wickUpColor: '#26a69a',
+      wickDownColor: '#ef5350',
+      visible: false,
+    }
+  );
+
+  const trendLine = priceChart.addSeries(
+    LightweightCharts.LineSeries,
+    { color: '#ffcc00', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Solid }
+  );
+
+  const prevHighLine = priceChart.addSeries(
+    LightweightCharts.LineSeries,
+    { color: '#ff0000', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted }
+  );
+
+  const prevLowLine = priceChart.addSeries(
+    LightweightCharts.LineSeries,
+    { color: '#00bcd4', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted }
+  );
+
+  const pocLine = priceChart.addSeries(
+    LightweightCharts.LineSeries,
+    { color: '#ff0000', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Solid }
+  );
+
+  const prevDayHighLine = priceChart.addSeries(
+    LightweightCharts.LineSeries,
+    { color: '#ffa500', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted }
+  );
+
+  const prevDayLowLine = priceChart.addSeries(
+    LightweightCharts.LineSeries,
+    { color: '#ffa500', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted }
+  );
+
+  const prevSessionHighLine = priceChart.addSeries(
+    LightweightCharts.LineSeries,
+    { color: '#00ffff', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed }
+  );
+
+  const prevSessionLowLine = priceChart.addSeries(
+    LightweightCharts.LineSeries,
+    { color: '#00ffff', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed }
+  );
+
+  // ----------- VOLUME CHART -----------
+  const volumeChart = LightweightCharts.createChart(
+    document.getElementById('volume-chart'),
+    {
+      layout: { background: { color: '#000000' }, textColor: '#cccccc' },
+      grid: {
+        vertLines: { color: '#222222' },
+        horzLines: { color: '#222222' },
+      },
+      rightPriceScale: { borderColor: '#555555' },
+      timeScale: { borderColor: '#555555', visible: true },
+    }
+  );
+
+  const volumeSeries = volumeChart.addSeries(
+    LightweightCharts.HistogramSeries,
+    {
+      priceFormat: { type: 'volume' },
+      priceScaleId: '',
+      base: 0,
+    }
+  );
+
+  // ----------- VOLUME PROFILE (LEFT CANVAS) -----------
+  const vpCanvas = document.getElementById('vpCanvas');
+  const vpCtx = vpCanvas.getContext('2d');
+  let vpMinPrice = 0;
+  let vpStep = 1;
+
+  let currentCandles = [];
+  let currentVolumeProfile = [];
+  let currentVisibleRange = null;
+  let prevDayLevels = null;
+  let prevSessionLevels = null;
+
+  let realVolumeBars = [];
+  let tickVolumeBars = [];
+
+  let showTrend         = true;
+  let showPrevDay       = true;
+  let showPrevSession   = true;
+  let showVolumeProfile = true;
+  let useTickVolume     = document.getElementById('radio-vol-tick').checked;
+
+  // VP width % (10–100), default 60
+  let vpWidthPercent    = 60;
+  const vpWidthInput    = document.getElementById('vp-width-input');
+
+  function clampVpWidth(val) {
+    if (Number.isNaN(val)) return 60;
+    if (val < 10) return 10;
+    if (val > 100) return 100;
+    return val;
+  }
+
+  vpWidthInput.addEventListener('change', () => {
+    let newVal = parseFloat(vpWidthInput.value);
+    newVal = clampVpWidth(newVal);
+    vpWidthPercent = newVal;
+    vpWidthInput.value = String(newVal);
+    drawVolumeProfile(true); // just redraw profile
+  });
+
+  function resizeVpCanvas() {
+    const col = document.getElementById('vp-column');
+    const priceDiv = document.getElementById('price-chart');
+
+    const colRect   = col.getBoundingClientRect();
+    const priceRect = priceDiv.getBoundingClientRect();
+
+    const height = priceRect.height;
+    const width  = colRect.width;
+    const offsetTop = priceRect.top - colRect.top;
+
+    vpCanvas.width  = width;
+    vpCanvas.height = height;
+
+    vpCanvas.style.top  = offsetTop + 'px';
+    vpCanvas.style.left = '0px';
+  }
+
+  function buildVolumeProfile(candles, bins = 40) {
+    if (!candles || candles.length === 0) return [];
+
+    let minPrice = Math.min(...candles.map(c => c.low));
+    let maxPrice = Math.max(...candles.map(c => c.high));
+    if (!isFinite(minPrice) || !isFinite(maxPrice) || minPrice === maxPrice) {
+      return [];
+    }
+
+    vpMinPrice = minPrice;
+    vpStep     = (maxPrice - minPrice) / bins;
+
+    const buckets = Array(bins).fill(0);
+
+    candles.forEach(c => {
+      const vol = useTickVolume
+        ? (c.tickVolume ?? c.tickvol ?? c.realVolume ?? c.volume ?? 0)
+        : (c.realVolume ?? c.volume ?? c.tickVolume ?? c.tickvol ?? 0);
+
+      const start = Math.floor((c.low  - vpMinPrice) / vpStep);
+      const end   = Math.floor((c.high - vpMinPrice) / vpStep);
+      const span  = Math.max(1, end - start + 1);
+
+      for (let i = start; i <= end; i++) {
+        if (i >= 0 && i < bins) {
+          buckets[i] += vol / span;
+        }
+      }
+    });
+
+    return buckets.map((v, i) => ({
+      price: vpMinPrice + (i + 0.5) * vpStep,
+      volume: v,
+    }));
+  }
+
+  function computeValueArea(profile, valueAreaPercent = 0.7) {
+    if (!profile || !profile.length) return null;
+
+    const totalVol = profile.reduce((sum, p) => sum + (p.volume || 0), 0);
+    if (!Number.isFinite(totalVol) || totalVol <= 0) return null;
+
+    const sorted = [...profile].sort((a, b) => b.volume - a.volume);
+    const target = totalVol * valueAreaPercent;
+
+    let acc = 0;
+    const binsInVA = [];
+
+    for (const p of sorted) {
+      binsInVA.push(p);
+      acc += p.volume;
+      if (acc >= target) break;
+    }
+
+    const vah = Math.max(...binsInVA.map(p => p.price));
+    const val = Math.min(...binsInVA.map(p => p.price));
+    return { vah, val };
+  }
+
+  function updateOverlayLines(candles) {
+    if (!candles || candles.length < 2 || !showTrend) {
+      trendLine.setData([]);
+      prevHighLine.setData([]);
+      prevLowLine.setData([]);
+      return;
+    }
+
+    const first = candles[0];
+    const last  = candles[candles.length - 1];
+    const prev  = candles[candles.length - 2];
+
+    trendLine.setData([
+      { time: first.time, value: first.close },
+      { time: last.time,  value: last.close },
+    ]);
+
+    const startTime = first.time;
+    const endTime   = last.time;
+
+    prevHighLine.setData([
+      { time: startTime, value: prev.high },
+      { time: endTime,   value: prev.high },
+    ]);
+
+    prevLowLine.setData([
+      { time: startTime, value: prev.low },
+      { time: endTime,   value: prev.low },
+    ]);
+  }
+
+  function updateLevelLines() {
+    if (!currentCandles.length) return;
+
+    const firstTime = currentCandles[0].time;
+    const lastTime  = currentCandles[currentCandles.length - 1].time;
+
+    if (showPrevDay && prevDayLevels && prevDayLevels.high != null && prevDayLevels.low != null) {
+      prevDayHighLine.setData([
+        { time: firstTime, value: prevDayLevels.high },
+        { time: lastTime,  value: prevDayLevels.high },
+      ]);
+      prevDayLowLine.setData([
+        { time: firstTime, value: prevDayLevels.low },
+        { time: lastTime,  value: prevDayLevels.low },
+      ]);
+    } else {
+      prevDayHighLine.setData([]);
+      prevDayLowLine.setData([]);
+    }
+
+    if (showPrevSession && prevSessionLevels && prevSessionLevels.high != null && prevSessionLevels.low != null) {
+      prevSessionHighLine.setData([
+        { time: firstTime, value: prevSessionLevels.high },
+        { time: lastTime,  value: prevSessionLevels.high },
+      ]);
+      prevSessionLowLine.setData([
+        { time: firstTime, value: prevSessionLevels.low },
+        { time: lastTime,  value: prevSessionLevels.low },
+      ]);
+    } else {
+      prevSessionHighLine.setData([]);
+      prevSessionLowLine.setData([]);
+    }
+  }
+
+  function rebuildVolumeProfile(ignorePriceLine = false) {
+    resizeVpCanvas();
+
+    if (!currentCandles.length || !showVolumeProfile) {
+      currentVolumeProfile = [];
+      drawVolumeProfile(ignorePriceLine);
+      return;
+    }
+
+    let source = currentCandles;
+
+    if (currentVisibleRange &&
+        currentVisibleRange.from != null &&
+        currentVisibleRange.to != null) {
+      const from = currentVisibleRange.from;
+      const to   = currentVisibleRange.to;
+      const filtered = currentCandles.filter(c => c.time >= from && c.time <= to);
+
+      if (filtered.length) {
+        source = filtered;
+      }
+    }
+
+    currentVolumeProfile = buildVolumeProfile(source);
+
+    console.log(
+      'VP source candles:', source.length,
+      'profile bins:', currentVolumeProfile.length
+    );
+
+    drawVolumeProfile(ignorePriceLine);
+  }
+
+  function drawVolumeProfile(ignorePriceLine = false) {
+    resizeVpCanvas();
+    const width  = vpCanvas.width;
+    const height = vpCanvas.height;
+
+    if (width <= 0 || height <= 0) {
+      if (!ignorePriceLine) pocLine.setData([]);
+      return;
+    }
+
+    vpCtx.clearRect(0, 0, width, height);
+    vpCtx.fillStyle = 'rgba(255, 255, 255, 0.04)';
+    vpCtx.fillRect(0, 0, width, height);
+
+    if (!showVolumeProfile || !currentVolumeProfile || currentVolumeProfile.length === 0) {
+      if (!ignorePriceLine) pocLine.setData([]);
+      return;
+    }
+
+    const maxVol = Math.max(...currentVolumeProfile.map(p => p.volume || 0));
+    if (!isFinite(maxVol) || maxVol <= 0) {
+      if (!ignorePriceLine) pocLine.setData([]);
+      return;
+    }
+
+    const series = document.getElementById('radio-candle').checked
+      ? candleSeries
+      : lineSeries;
+
+    const sidePad       = 8;
+    const vpUsableWidth = (width * vpWidthPercent) / 100;
+    const rightX        = width - sidePad;
+
+    const va  = computeValueArea(currentVolumeProfile);
+    const vah = va ? va.vah : null;
+    const val = va ? va.val : null;
+
+    currentVolumeProfile.forEach(level => {
+      const topPrice    = level.price + vpStep / 2;
+      const bottomPrice = level.price - vpStep / 2;
+
+      const yTop    = series.priceToCoordinate(topPrice);
+      const yBottom = series.priceToCoordinate(bottomPrice);
+
+      if (yTop == null || yBottom == null) return;
+
+      const y  = Math.min(yTop, yBottom);
+      let barH = Math.abs(yBottom - yTop);
+      if (barH < 1) barH = 1;
+
+      const barW = (level.volume / maxVol) * vpUsableWidth;
+      const x    = rightX - barW;
+      const inVA = va && level.price >= val && level.price <= vah;
+
+      vpCtx.fillStyle = inVA ? '#FFC400' : '#2962FF';
+      vpCtx.fillRect(x, y, barW, barH);
+    });
+
+    if (!ignorePriceLine) {
+      let pocIndex = -1;
+      let maxForPoc = -1;
+      currentVolumeProfile.forEach((level, idx) => {
+        if ((level.volume || 0) > maxForPoc) {
+          maxForPoc = level.volume || 0;
+          pocIndex = idx;
+        }
+      });
+
+      if (pocIndex >= 0) {
+        const pocPrice = currentVolumeProfile[pocIndex].price;
+        const pocY = series.priceToCoordinate(pocPrice);
+
+        if (pocY != null) {
+          vpCtx.strokeStyle = '#FF0000';
+          vpCtx.lineWidth   = 2;
+          vpCtx.beginPath();
+          vpCtx.moveTo(0, pocY);
+          vpCtx.lineTo(width, pocY);
+          vpCtx.stroke();
+
+          if (currentCandles.length >= 2) {
+            const firstTime = currentCandles[0].time;
+            const lastTime  = currentCandles[currentCandles.length - 1].time;
+            pocLine.setData([
+              { time: firstTime, value: pocPrice },
+              { time: lastTime,  value: pocPrice },
+            ]);
+          }
+        } else {
+          pocLine.setData([]);
+        }
+      } else {
+        pocLine.setData([]);
+      }
+    }
+  }
+
+  // ---- TIME SCALE SYNC (PRICE <-> VOLUME) + VP update ----
+  let isSyncingTimeRange = false;
+
+  function onTimeRangeChanged(range, sourceChart, targetChart) {
+    if (!range || range.from == null || range.to == null) return;
+    if (isSyncingTimeRange) return;
+
+    isSyncingTimeRange = true;
+    try {
+      targetChart.timeScale().setVisibleRange(range);
+    } catch (e) {
+      console.error('setVisibleRange error:', e);
+    }
+    isSyncingTimeRange = false;
+
+    // keep VP in sync with visible candles
+    currentVisibleRange = range;
+    rebuildVolumeProfile(true);
+  }
+
+  priceChart.timeScale().subscribeVisibleTimeRangeChange((range) => {
+    onTimeRangeChanged(range, priceChart, volumeChart);
+  });
+
+  volumeChart.timeScale().subscribeVisibleTimeRangeChange((range) => {
+    onTimeRangeChanged(range, volumeChart, priceChart);
+  });
+
+  window.addEventListener('resize', () => drawVolumeProfile(true));
+
+  // ----------- CONTROLS -----------
+  const radioLine       = document.getElementById('radio-line');
+  const radioCandle     = document.getElementById('radio-candle');
+  const chkTrend        = document.getElementById('chk-trend');
+  const chkPrevDay      = document.getElementById('chk-prevday');
+  const chkPrevSession  = document.getElementById('chk-prevsession');
+  const chkVP           = document.getElementById('chk-vp');
+  const chkVolumePanel  = document.getElementById('chk-volume-panel');
+  const radioVolReal    = document.getElementById('radio-vol-real');
+  const radioVolTick    = document.getElementById('radio-vol-tick');
+  const btnGoLatest     = document.getElementById('btn-go-latest');
+
+  radioLine.addEventListener('change', () => {
+    if (radioLine.checked) {
+      lineSeries.applyOptions({ visible: true });
+      candleSeries.applyOptions({ visible: false });
+      drawVolumeProfile(true);
+    }
+  });
+
+  radioCandle.addEventListener('change', () => {
+    if (radioCandle.checked) {
+      lineSeries.applyOptions({ visible: false });
+      candleSeries.applyOptions({ visible: true });
+      drawVolumeProfile(true);
+    }
+  });
+
+  chkTrend.addEventListener('change', () => {
+    showTrend = chkTrend.checked;
+    updateOverlayLines(currentCandles);
+  });
+
+  chkPrevDay.addEventListener('change', () => {
+    showPrevDay = chkPrevDay.checked;
+    updateLevelLines();
+  });
+
+  chkPrevSession.addEventListener('change', () => {
+    showPrevSession = chkPrevSession.checked;
+    updateLevelLines();
+  });
+
+  chkVP.addEventListener('change', () => {
+    showVolumeProfile = chkVP.checked;
+    rebuildVolumeProfile();
+  });
+
+  chkVolumePanel.addEventListener('change', () => {
+    const volDiv = document.getElementById('volume-chart');
+    volDiv.style.display = chkVolumePanel.checked ? 'block' : 'none';
+  });
+
+  radioVolReal.addEventListener('change', () => {
+    if (!radioVolReal.checked) return;
+    useTickVolume = false;
+    volumeSeries.setData(realVolumeBars);
+    rebuildVolumeProfile(false);
+  });
+
+  radioVolTick.addEventListener('change', () => {
+    if (!radioVolTick.checked) return;
+    useTickVolume = true;
+    volumeSeries.setData(tickVolumeBars);
+    rebuildVolumeProfile(false);
+  });
+
+  // NEW: Go to Latest button logic (explicit visible range jump)
+  btnGoLatest.addEventListener('click', () => {
+    if (!currentCandles.length) return;
+
+    const lastTime = currentCandles[currentCandles.length - 1].time;
+    const tsPrice  = priceChart.timeScale();
+    const tsVol    = volumeChart.timeScale();
+
+    // How wide is the current view?
+    const curRange = tsPrice.getVisibleRange
+      ? tsPrice.getVisibleRange()
+      : null;
+
+    let from, to;
+
+    if (curRange && curRange.from != null && curRange.to != null) {
+      const width = curRange.to - curRange.from;   // keep same zoom
+      to   = lastTime;
+      from = lastTime - width;
+    } else {
+      // fallback: show last ~200 candles
+      const idxStart = Math.max(0, currentCandles.length - 200);
+      from = currentCandles[idxStart].time;
+      to   = lastTime;
+    }
+
+    const newRange = { from, to };
+
+    try {
+      isSyncingTimeRange = true;
+      tsPrice.setVisibleRange(newRange);
+      tsVol.setVisibleRange(newRange);
+    } catch (e) {
+      console.error('go latest setVisibleRange error:', e);
+    } finally {
+      isSyncingTimeRange = false;
+    }
+
+    currentVisibleRange = newRange;
+    rebuildVolumeProfile(true);   // keep VP aligned with new view
+  });
+
+
+  // ----------- DATA -----------
+  const API_BASE = '';
+
+  async function loadLevels() {
+    try {
+      const res = await fetch(`${API_BASE}/api/levels`);
+      const data = await res.json();
+      prevDayLevels = data.prev_day || null;
+      prevSessionLevels = data.prev_session || null;
+      updateLevelLines();
+    } catch (e) {
+      console.error('levels error', e);
+    }
+  }
+
+  async function loadInitialData() {
+    const res = await fetch(`${API_BASE}/api/history`);
+    const data = await res.json();
+
+    if (!data || data.error) {
+      console.error('history error', data);
+      return;
+    }
+
+    const cleanPrice = (data.price || []).filter(p =>
+      p && p.time != null && Number.isFinite(p.value)
+    );
+
+    const rawCandles = data.candles || [];
+    const cleanCandles = rawCandles.filter(c =>
+      c &&
+      c.time != null &&
+      [c.open, c.high, c.low, c.close].every(v => v != null && Number.isFinite(v))
+    );
+
+    const realVolArr  = (data.volume || []).filter(v =>
+      v && v.time != null && v.value != null && Number.isFinite(v.value)
+    );
+    const tickVolArr  = (data.tickvolume || []).filter(v =>
+      v && v.time != null && v.value != null && Number.isFinite(v.value)
+    );
+
+    const volByTime  = new Map(realVolArr.map(v => [v.time, v.value]));
+    const tickByTime = new Map(tickVolArr.map(v => [v.time, v.value]));
+
+    cleanCandles.forEach(c => {
+      const rvRaw = volByTime.get(c.time);
+      const tvRaw = tickByTime.get(c.time);
+
+      const rv = Number.isFinite(rvRaw) ? rvRaw : 0;
+      const tv = Number.isFinite(tvRaw) ? tvRaw : 0;
+
+      c.realVolume = rv;
+      c.tickVolume = tv;
+      c.volume     = useTickVolume ? tv : rv;
+    });
+
+    realVolumeBars = cleanCandles.map(c => ({
+      time: c.time,
+      value: Number.isFinite(c.realVolume) ? c.realVolume : 0,
+    }));
+    tickVolumeBars = cleanCandles.map(c => ({
+      time: c.time,
+      value: Number.isFinite(c.tickVolume) ? c.tickVolume : 0,
+    }));
+
+    lineSeries.setData(cleanCandles.length ? cleanPrice : []);
+    candleSeries.setData(cleanCandles);
+
+    if (useTickVolume) {
+      volumeSeries.setData(tickVolumeBars);
+    } else {
+      volumeSeries.setData(realVolumeBars);
+    }
+
+    currentCandles = cleanCandles;
+
+    // Initial fit + sync both charts
+    priceChart.timeScale().fitContent();
+    try {
+      const r = priceChart.timeScale().getVisibleRange
+        ? priceChart.timeScale().getVisibleRange()
+        : null;
+      if (r) {
+        volumeChart.timeScale().setVisibleRange(r);
+        currentVisibleRange = r;
+      }
+    } catch (e) {
+      console.error('initial setVisibleRange error:', e);
+    }
+
+    rebuildVolumeProfile(false);
+    updateOverlayLines(currentCandles);
+    updateLevelLines();
+  }
+
+  async function startLiveUpdates() {
+    setInterval(async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/latest`);
+        const data = await res.json();
+
+        if (data.price &&
+            data.price.time != null &&
+            Number.isFinite(data.price.value)) {
+          lineSeries.update(data.price);
+        }
+
+        if (data.candle &&
+            data.candle.time != null &&
+            [data.candle.open, data.candle.high, data.candle.low, data.candle.close]
+              .every(v => v != null && Number.isFinite(v))) {
+
+          const rvRaw = (data.volume &&
+                        data.volume.time === data.candle.time &&
+                        Number.isFinite(data.volume.value))
+                        ? data.volume.value : 0;
+
+          const tvRaw = (data.tickvolume &&
+                        data.tickvolume.time === data.candle.time &&
+                        Number.isFinite(data.tickvolume.value))
+                        ? data.tickvolume.value : 0;
+
+          const rv = Number.isFinite(rvRaw) ? rvRaw : 0;
+          const tv = Number.isFinite(tvRaw) ? tvRaw : 0;
+
+          const candle = {
+            ...data.candle,
+            realVolume: rv,
+            tickVolume: tv,
+            volume: useTickVolume ? tv : rv,
+          };
+
+          candleSeries.update(candle);
+          currentCandles.push(candle);
+
+          realVolumeBars.push({ time: candle.time, value: rv });
+          tickVolumeBars.push({ time: candle.time, value: tv });
+
+          const panelVal = useTickVolume ? tv : rv;
+          if (Number.isFinite(panelVal)) {
+            volumeSeries.update({ time: candle.time, value: panelVal });
+          }
+        }
+
+        if (currentCandles.length) {
+          rebuildVolumeProfile(false);
+          updateOverlayLines(currentCandles);
+          updateLevelLines();
+        }
+      } catch (e) {
+        console.error('update error', e);
+      }
+    }, 5000);
+  }
+
+  loadInitialData()
+    .then(() => {
+      startLiveUpdates();
+      return loadLevels();
+    })
+    .catch(e => console.error(e));
+</script>
+</body>
+</html>
